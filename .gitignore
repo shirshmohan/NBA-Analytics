@@ -1,0 +1,30 @@
+# env / secrets
+.env
+backend/.env
+
+# python
+__pycache__/
+*.pyc
+env/
+.env
+backend/.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+
+# logs
+*.log
+
+# data / db dumps
+*.parquet
+*.csv
+*.sqlite
+*.db
+
+
+node_modules/
+dist/
+build/
+.next/
