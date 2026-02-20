@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>NBA 3D Frontend — ESPN x Cyber</title>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#05060a;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    canvas{display:block}
+
+    /* ESPN x Cyber HUD */
+    .hud{
+      position:fixed;inset:0;pointer-events:none;
+      display:grid;grid-template-columns:360px 1fr 360px;
+      gap:14px;padding:16px;
+    }
+    .panel{
+      pointer-events:auto;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,0.12);
+      background:linear-gradient(180deg,rgba(255,255,255,0.09),rgba(255,255,255,0.03));
+      box-shadow:0 18px 50px rgba(0,0,0,0.45);
+      backdrop-filter: blur(12px);
+      color:rgba(255,255,255,0.92);
+      padding:14px;
+    }
+    .brand{
+      pointer-events:auto;
+      display:inline-flex;align-items:center;gap:10px;
+      padding:10px 14px;border-radius:16px;
+      border:1px solid rgba(255,255,255,0.12);
+      background:rgba(0,0,0,0.25);
+      font-weight:900;letter-spacing:0.8px;
+    }
+    .brand .dot{width:10px;height:10px;border-radius:999px;background:#ff2d55;box-shadow:0 0 18px rgba(255,45,85,0.7)}
+    .sub{font-size:12px;opacity:0.7;margin-top:6px}
+    h3{margin:0 0 10px;font-size:12px;letter-spacing:0.7px;text-transform:uppercase;opacity:0.75}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .btn{
+      cursor:pointer;pointer-events:auto;
+      padding:10px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,0.14);
+      background:rgba(255,255,255,0.08);
+      color:rgba(255,255,255,0.93);
+      font-weight:750;
+      transition:transform .12s ease, background .12s ease;
+    }
+    .btn:hover{transform:translateY(-1px);background:rgba(255,255,255,0.12)}
+    .btn:active{transform:translateY(0) scale(0.99)}
+    .pill{
+      display:inline-flex;gap:8px;align-items:center;
+      padding:8px 10px;border-radius:999px;
+      border:1px solid rgba(255,255,255,0.12);
+      background:rgba(0,0,0,0.22);
+      font-size:12px;opacity:0.92
+    }
+    .search{
+      width:100%;padding:10px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,0.14);
+      background:rgba(0,0,0,0.22);
+      color:rgba(255,255,255,0.9);
+      outline:none
+    }
+    .search::placeholder{color:rgba(255,255,255,0.45)}
+    .centerTop{pointer-events:none;display:flex;justify-content:center;align-items:flex-start}
+    .hint{font-size:12px;opacity:0.7;margin-top:10px;line-height:1.35}
+
+    @media (max-width: 1100px){
+      .hud{grid-template-columns:1fr;gap:10px}
+      .panel{max-width:720px;margin:0 auto}
+      .centerTop{justify-content:flex-start}
+    }
+  </style>
+  <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+</head>
+<body>
+  <div class="hud">
+    <div class="panel">
+      <div class="brand"><span class="dot"></span> NBA COMMAND CENTER</div>
+      <div class="sub">ESPN-like broadcast UI + cyber arena depth</div>
+      <div style="height:12px"></div>
+
+      <h3>Explore</h3>
+      <input class="search" id="search" placeholder="Search player/team (mock for now)"/>
+      <div style="height:10px"></div>
+
+      <div class="row">
+        <button class="btn" id="btnPlayers">Players</button>
+        <button class="btn" id="btnTeams">Teams</button>
+        <button class="btn" id="btnSim">Similarity</button>
+        <button class="btn" id="btnHome">Home</button>
+      </div>
+
+      <div class="hint">
+        • Drag/touch to orbit • Scroll/pinch to zoom<br/>
+        • Click 3D cards/logos to open sections<br/>
+        • Later: connect search → FastAPI endpoints
+      </div>
+    </div>
+
+    <div class="centerTop">
+      <div class="brand" id="modeTitle"><span class="dot"></span> HOME</div>
+    </div>
+
+    <div class="panel">
+      <h3>Now Showing</h3>
+      <div class="row">
+        <div class="pill" id="status">Mode: Home</div>
+        <div class="pill" id="fps">FPS: --</div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row" style="justify-content:space-between">
+        <button class="btn" id="btnCine">Cinematic</button>
+        <button class="btn" id="btnReset">Reset View</button>
+      </div>
+      <div style="height:12px"></div>
+      <div class="pill">3D Logos • Floating Charts • Scoreboard • Animated Lines</div>
+    </div>
+  </div>
+
+  <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // -------------------- Scene --------------------
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x05060a, 14, 90);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 400);
+    camera.position.set(0, 10, 20);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.set(0, 2.2, 0);
+    controls.minDistance = 8;
+    controls.maxDistance = 45;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.enablePan = false;
+
+    // -------------------- Lights (Broadcast + Neon rim) --------------------
+    scene.add(new THREE.HemisphereLight(0xeaf1ff, 0x10121b, 0.70));
+
+    const key = new THREE.DirectionalLight(0xffffff, 1.25);
+    key.position.set(12, 18, 10);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.left = -30;
+    key.shadow.camera.right = 30;
+    key.shadow.camera.top = 30;
+    key.shadow.camera.bottom = -30;
+    scene.add(key);
+
+    const neonRim = new THREE.PointLight(0x6ea0ff, 1.7, 55, 2);
+    neonRim.position.set(-12, 7, -8);
+    scene.add(neonRim);
+
+    const accent = new THREE.PointLight(0xff2d55, 1.1, 40, 2);
+    accent.position.set(10, 6, -10);
+    scene.add(accent);
+
+    // -------------------- Arena base --------------------
+    const platform = new THREE.Mesh(
+      new THREE.CylinderGeometry(7.8, 8.6, 0.75, 72),
+      new THREE.MeshStandardMaterial({ color: 0x0b0f1a, roughness: 0.55, metalness: 0.25 })
+    );
+    platform.position.y = -0.38;
+    platform.receiveShadow = true;
+    scene.add(platform);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(7.55, 0.085, 24, 256),
+      new THREE.MeshStandardMaterial({
+        color: 0x5a86ff, roughness: 0.2, metalness: 0.75,
+        emissive: 0x203cff, emissiveIntensity: 0.60
+      })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.02;
+    scene.add(ring);
+
+    // Hologram floor (abstract “court”)
+    const holo = new THREE.Mesh(
+      new THREE.CircleGeometry(6.25, 128),
+      new THREE.MeshStandardMaterial({
+        color: 0x0d152b, roughness: 0.35, metalness: 0.25,
+        emissive: 0x06102b, emissiveIntensity: 0.80
+      })
+    );
+    holo.rotation.x = -Math.PI / 2;
+    holo.position.y = 0.01;
+    scene.add(holo);
+
+    const grid = new THREE.GridHelper(12.5, 20, 0x4f76ff, 0x263aa8);
+    grid.position.y = 0.02;
+    grid.material.opacity = 0.22;
+    grid.material.transparent = true;
+    scene.add(grid);
+
+    // -------------------- Particles --------------------
+    const starCount = 1700;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const r = 75 * Math.random();
+      const theta = Math.random() * Math.PI * 2;
+      const y = (Math.random() - 0.35) * 48;
+      starPos[i*3+0] = Math.cos(theta) * r;
+      starPos[i*3+1] = y;
+      starPos[i*3+2] = Math.sin(theta) * r;
+    }
+    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+    const stars = new THREE.Points(
+      starGeo,
+      new THREE.PointsMaterial({ color: 0xbad0ff, size: 0.05, transparent: true, opacity: 0.55 })
+    );
+    scene.add(stars);
+
+    // -------------------- Helpers: Canvas textures (for cards + “logos” + scoreboard) --------------------
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x+rr, y);
+      ctx.arcTo(x+w, y, x+w, y+h, rr);
+      ctx.arcTo(x+w, y+h, x, y+h, rr);
+      ctx.arcTo(x, y+h, x, y, rr);
+      ctx.arcTo(x, y, x+w, y, rr);
+      ctx.closePath();
+    }
+
+    function makePanelTexture({ title, subtitle, value, accentHex = "#6ea0ff", badge = "" }) {
+      const c = document.createElement("canvas");
+      c.width = 1024; c.height = 512;
+      const ctx = c.getContext("2d");
+
+      // base
+      ctx.fillStyle = "rgba(5, 8, 14, 0.88)";
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      // accent top bar
+      const g = ctx.createLinearGradient(0, 0, c.width, 0);
+      g.addColorStop(0, accentHex);
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, c.width, 12);
+
+      // border
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 6;
+      roundRect(ctx, 22, 22, c.width - 44, c.height - 44, 26);
+      ctx.stroke();
+
+      // badge circle
+      if (badge) {
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(255,255,255,0.10)";
+        ctx.arc(90, 92, 44, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(255,255,255,0.90)";
+        ctx.font = "900 34px system-ui";
+        ctx.fillText(badge, 66, 104);
+      }
+
+      // text
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.font = "900 58px system-ui";
+      ctx.fillText(title, 150, 115);
+
+      ctx.fillStyle = "rgba(255,255,255,0.62)";
+      ctx.font = "600 34px system-ui";
+      ctx.fillText(subtitle, 150, 170);
+
+      ctx.fillStyle = "rgba(255,255,255,0.94)";
+      ctx.font = "900 128px system-ui";
+      ctx.fillText(value, 60, 355);
+
+      ctx.fillStyle = "rgba(255,255,255,0.38)";
+      ctx.font = "600 24px system-ui";
+      ctx.fillText("Click to open", 60, 430);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.anisotropy = 8;
+      return tex;
+    }
+
+    function makeTeamLogoTexture({ abbr, name, primary = "#6ea0ff", secondary="#0b0f1a" }) {
+      const c = document.createElement("canvas");
+      c.width = 512; c.height = 512;
+      const ctx = c.getContext("2d");
+
+      // badge bg
+      const grad = ctx.createRadialGradient(200, 160, 40, 256, 256, 260);
+      grad.addColorStop(0, primary);
+      grad.addColorStop(1, secondary);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 512);
+
+      // outer ring
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.arc(256, 256, 220, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // inner ring
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.arc(256, 256, 178, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // big abbr
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.font = "900 150px system-ui";
+      const w = ctx.measureText(abbr).width;
+      ctx.fillText(abbr, 256 - w/2, 300);
+
+      // name
+      ctx.fillStyle = "rgba(255,255,255,0.70)";
+      ctx.font = "800 32px system-ui";
+      const n = name.toUpperCase();
+      const w2 = ctx.measureText(n).width;
+      ctx.fillText(n, 256 - w2/2, 365);
+
+      // tiny “NBA” mark (placeholder)
+      ctx.fillStyle = "rgba(255,45,85,0.95)";
+      ctx.fillRect(228, 392, 56, 10);
+      ctx.fillStyle = "rgba(255,255,255,0.86)";
+      ctx.font = "900 18px system-ui";
+      ctx.fillText("NBA", 236, 428);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.anisotropy = 8;
+      return tex;
+    }
+
+    function makeScoreboardTexture({ left="LAL", right="BOS", lScore=102, rScore=99, clock="02:18", quarter="Q4" }) {
+      const c = document.createElement("canvas");
+      c.width = 1024; c.height = 256;
+      const ctx = c.getContext("2d");
+
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0,0,c.width,c.height);
+
+      // border
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 6;
+      roundRect(ctx, 18, 18, c.width-36, c.height-36, 20);
+      ctx.stroke();
+
+      // ESPN-like red top strip
+      ctx.fillStyle = "rgba(255,45,85,0.95)";
+      ctx.fillRect(0,0,c.width,12);
+
+      // teams
+      ctx.fillStyle = "rgba(255,255,255,0.90)";
+      ctx.font = "900 54px system-ui";
+      ctx.fillText(left, 70, 110);
+      ctx.fillText(right, 820, 110);
+
+      // scores
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.font = "900 92px system-ui";
+      ctx.fillText(String(lScore), 70, 200);
+      const rs = String(rScore);
+      const mw = ctx.measureText(rs).width;
+      ctx.fillText(rs, 954 - mw, 200);
+
+      // center clock
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.font = "900 62px system-ui";
+      const cw = ctx.measureText(clock).width;
+      ctx.fillText(clock, 512 - cw/2, 130);
+
+      ctx.fillStyle = "rgba(255,255,255,0.60)";
+      ctx.font = "800 30px system-ui";
+      const qw = ctx.measureText(quarter).width;
+      ctx.fillText(quarter, 512 - qw/2, 175);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.anisotropy = 8;
+      return tex;
+    }
+
+    // -------------------- 3D UI objects: Cards --------------------
+    const clickable = [];
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function createCard({ title, subtitle, value, accentHex, badge }, pos, rotY=0) {
+      const tex = makePanelTexture({ title, subtitle, value, accentHex, badge });
+      const mat = new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.32,
+        metalness: 0.18,
+        transparent: true,
+        opacity: 0.98,
+        emissive: new THREE.Color(0x0a1a4a),
+        emissiveIntensity: 0.35
+      });
+
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 2.7), mat);
+      mesh.position.copy(pos);
+      mesh.rotation.y = rotY;
+      mesh.castShadow = true;
+
+      // subtle glass frame
+      const frame = new THREE.Mesh(
+        new THREE.PlaneGeometry(5.55, 2.85),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, transparent:true, opacity: 0.06, roughness: 0.2, metalness: 0.75 })
+      );
+      frame.position.copy(pos).add(new THREE.Vector3(0,0,-0.02));
+      frame.rotation.y = rotY;
+
+      scene.add(frame);
+      scene.add(mesh);
+
+      clickable.push(mesh);
+      return mesh;
+    }
+
+    const cards = [
+      createCard({ title:"Players", subtitle:"Dashboard + trends", value:"01", accentHex:"#7aa2ff", badge:"P" }, new THREE.Vector3(-5.6, 2.9, 2.2), 0.26),
+      createCard({ title:"Teams", subtitle:"Logos + standings", value:"02", accentHex:"#59ffd6", badge:"T" }, new THREE.Vector3(0.0, 3.25, -0.2), 0.0),
+      createCard({ title:"Similarity", subtitle:"Find comps", value:"03", accentHex:"#ff7ad9", badge:"S" }, new THREE.Vector3(5.6, 2.9, 2.2), -0.26),
+    ];
+    const cardBasePos = cards.map(c => c.position.clone());
+
+    // -------------------- 3D Team Logos (procedural) --------------------
+    const teamData = [
+      { abbr:"LAL", name:"Lakers", primary:"#6a5acd", secondary:"#0b0f1a" },
+      { abbr:"BOS", name:"Celtics", primary:"#1db954", secondary:"#0b0f1a" },
+      { abbr:"GSW", name:"Warriors", primary:"#1e90ff", secondary:"#0b0f1a" },
+      { abbr:"MIA", name:"Heat", primary:"#ff2d55", secondary:"#0b0f1a" },
+      { abbr:"DEN", name:"Nuggets", primary:"#ffd166", secondary:"#0b0f1a" },
+    ];
+
+    const logoGroup = new THREE.Group();
+    scene.add(logoGroup);
+
+    function createLogoBadge(team, angle, radius=5.2) {
+      const tex = makeTeamLogoTexture(team);
+      const mat = new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.22,
+        metalness: 0.35,
+        emissive: new THREE.Color(0x0b1435),
+        emissiveIntensity: 0.45
+      });
+
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.95, 64), mat);
+      mesh.position.set(Math.cos(angle)*radius, 2.05, Math.sin(angle)*radius);
+      mesh.lookAt(0, 2.05, 0);
+      mesh.castShadow = true;
+
+      // halo ring
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.98, 0.05, 18, 128),
+        new THREE.MeshStandardMaterial({
+          color: 0x5a86ff,
+          roughness: 0.15,
+          metalness: 0.8,
+          emissive: 0x203cff,
+          emissiveIntensity: 0.35,
+          transparent: true,
+          opacity: 0.7
+        })
+      );
+      halo.position.copy(mesh.position);
+      halo.rotation.x = Math.PI/2;
+
+      logoGroup.add(halo);
+      logoGroup.add(mesh);
+
+      clickable.push(mesh); // clickable team “logo”
+      mesh.userData = { type: "team", team };
+      return mesh;
+    }
+
+    const logos = [];
+    for (let i=0;i<teamData.length;i++){
+      const a = (i / teamData.length) * Math.PI * 2 + 0.35;
+      logos.push(createLogoBadge(teamData[i], a));
+    }
+
+    // -------------------- Floating Charts (animated line) --------------------
+    function makeChartLine(points, colorHex=0x7aa2ff) {
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color: colorHex, transparent:true, opacity: 0.95 });
+      const line = new THREE.Line(geo, mat);
+      return line;
+    }
+
+    function genChartPoints(n=40, width=4.6, height=1.8, seed=0.0) {
+      const pts = [];
+      let y = 0.7;
+      for (let i=0;i<n;i++){
+        const x = (i/(n-1))*width - width/2;
+        // smooth-ish randomness
+        y += (Math.sin(i*0.35 + seed)*0.08) + (Math.cos(i*0.18 + seed)*0.05);
+        y = Math.max(0.2, Math.min(height, y));
+        pts.push(new THREE.Vector3(x, y, 0));
+      }
+      return pts;
+    }
+
+    function createChartPanel({ title="PTS Trend", color=0x7aa2ff }, pos, rotY=0) {
+      const group = new THREE.Group();
+      group.position.copy(pos);
+      group.rotation.y = rotY;
+
+      // panel
+      const tex = makePanelTexture({ title, subtitle:"Animated line graph", value:"", accentHex:"#6ea0ff", badge:"" });
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(5.2, 2.6),
+        new THREE.MeshStandardMaterial({
+          map: tex, roughness:0.35, metalness:0.15, transparent:true, opacity:0.92,
+          emissive: new THREE.Color(0x07102a), emissiveIntensity: 0.55
+        })
+      );
+      panel.castShadow = true;
+      group.add(panel);
+
+      // chart line (in front of panel)
+      const pts = genChartPoints(44, 4.4, 1.6, Math.random()*10);
+      const line = makeChartLine(pts, color);
+      line.position.set(0, -0.55, 0.02);
+      group.add(line);
+
+      // glow “cursor” dot that moves along the line
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.06, 16, 16),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8, roughness: 0.2 })
+      );
+      dot.position.copy(pts[0]).add(new THREE.Vector3(0, -0.55, 0.04));
+      group.add(dot);
+
+      group.userData = { type:"chart", line, dot, pts, t:0 };
+      scene.add(group);
+
+      clickable.push(panel);
+      panel.userData = { type:"chartPanel" };
+      return group;
+    }
+
+    const charts = [
+      createChartPanel({ title:"Player — PPG by Season", color:0x7aa2ff }, new THREE.Vector3(-7.2, 5.6, -3.0), 0.35),
+      createChartPanel({ title:"Team — OffRtg Trend", color:0x59ffd6 }, new THREE.Vector3( 7.2, 5.6, -3.0), -0.35),
+    ];
+
+    // -------------------- Scoreboard (3D plane + dynamic texture) --------------------
+    const scoreboard = new THREE.Mesh(
+      new THREE.PlaneGeometry(10.8, 2.7),
+      new THREE.MeshStandardMaterial({
+        map: makeScoreboardTexture({}),
+        roughness: 0.25,
+        metalness: 0.25,
+        transparent: true,
+        opacity: 0.95,
+        emissive: new THREE.Color(0x0b1435),
+        emissiveIntensity: 0.55
+      })
+    );
+    scoreboard.position.set(0, 7.9, -6.8);
+    scoreboard.rotation.x = -0.04;
+    scoreboard.castShadow = true;
+    scene.add(scoreboard);
+
+    // -------------------- Camera tween --------------------
+    let camTween = null;
+    function tweenCamera(toPos, toTarget, duration=0.85) {
+      camTween = {
+        t: 0, duration,
+        fromPos: camera.position.clone(),
+        fromTarget: controls.target.clone(),
+        toPos: toPos.clone(),
+        toTarget: toTarget.clone()
+      };
+      controls.enabled = false;
+    }
+
+    // -------------------- Mode + UI wiring --------------------
+    const modeTitle = document.getElementById("modeTitle");
+    const status = document.getElementById("status");
+    const fpsEl = document.getElementById("fps");
+
+    function setMode(name) {
+      modeTitle.innerHTML = `<span class="dot"></span> ${name.toUpperCase()}`;
+      status.textContent = `Mode: ${name}`;
+    }
+
+    // Mock “data layer” you will later replace with FastAPI
+    function getMockScore() {
+      // later: fetch("/api/live-score?...") etc
+      const baseL = 96 + Math.floor(Math.random()*18);
+      const baseR = 92 + Math.floor(Math.random()*18);
+      const mm = String( Math.floor(Math.random()*3) ).padStart(2,"0");
+      const ss = String( Math.floor(Math.random()*60) ).padStart(2,"0");
+      return { left:"LAL", right:"BOS", lScore:baseL, rScore:baseR, clock:`0${mm}:${ss}`, quarter:"Q4" };
+    }
+
+    document.getElementById("btnHome").onclick = () => {
+      setMode("Home");
+      tweenCamera(new THREE.Vector3(0, 10, 20), new THREE.Vector3(0, 2.2, 0), 0.8);
+    };
+    document.getElementById("btnPlayers").onclick = () => {
+      setMode("Players");
+      tweenCamera(new THREE.Vector3(-10.5, 7.2, 14.5), new THREE.Vector3(-5.4, 2.8, 2.2), 0.95);
+    };
+    document.getElementById("btnTeams").onclick = () => {
+      setMode("Teams");
+      tweenCamera(new THREE.Vector3(0, 7.6, 16.5), new THREE.Vector3(0, 2.05, 0), 0.95);
+    };
+    document.getElementById("btnSim").onclick = () => {
+      setMode("Similarity");
+      tweenCamera(new THREE.Vector3(10.5, 7.2, 14.5), new THREE.Vector3(5.4, 2.8, 2.2), 0.95);
+    };
+    document.getElementById("btnReset").onclick = () => document.getElementById("btnHome").click();
+    document.getElementById("btnCine").onclick = () => {
+      setMode("Cinematic");
+      tweenCamera(new THREE.Vector3(0, 14.5, 22), new THREE.Vector3(0, 2.0, -1.0), 1.1);
+    };
+
+    // -------------------- Interaction: Raycast click on 3D --------------------
+    addEventListener("pointermove", (e) => {
+      pointer.x = (e.clientX / innerWidth) * 2 - 1;
+      pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+    });
+
+    addEventListener("pointerdown", (e) => {
+      pointer.x = (e.clientX / innerWidth) * 2 - 1;
+      pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(clickable, false);
+      if (!hits.length) return;
+
+      const obj = hits[0].object;
+      // Cards order: Players, Teams, Similarity
+      const cardIdx = cards.indexOf(obj);
+      if (cardIdx === 0) return document.getElementById("btnPlayers").click();
+      if (cardIdx === 1) return document.getElementById("btnTeams").click();
+      if (cardIdx === 2) return document.getElementById("btnSim").click();
+
+      // Team logos
+      if (obj.userData?.type === "team") {
+        const t = obj.userData.team;
+        setMode(`Team: ${t.abbr}`);
+        // zoom to the logo
+        const p = obj.position.clone();
+        tweenCamera(
+          p.clone().add(new THREE.Vector3(p.x*0.35, 2.8, p.z*0.35)).setY(5.8),
+          p.clone().setY(2.1),
+          0.9
+        );
+      }
+    });
+
+    // -------------------- Animate --------------------
+    const clock = new THREE.Clock();
+    let fpsAcc = 0, fpsCount = 0, fpsTimer = 0;
+
+    // scoreboard refresh (mock)
+    let scoreTimer = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      const t = clock.getElapsedTime();
+
+      // ambient motion
+      ring.rotation.z = t * 0.16;
+      stars.rotation.y = t * 0.03;
+      logoGroup.rotation.y = Math.sin(t*0.18) * 0.12;
+
+      // float cards
+      for (let i=0;i<cards.length;i++){
+        const c = cards[i];
+        c.position.y = cardBasePos[i].y + Math.sin(t*1.25 + i) * 0.18;
+        c.rotation.x = Math.sin(t*0.85 + i) * 0.02;
+      }
+
+      // animate chart cursors along line
+      for (const ch of charts) {
+        ch.userData.t = (ch.userData.t + dt * 0.35) % 1;
+        const idx = Math.floor(ch.userData.t * (ch.userData.pts.length - 1));
+        const p = ch.userData.pts[idx];
+        ch.userData.dot.position.set(p.x, p.y - 0.55, 0.04);
+      }
+
+      // scoreboard update (mock)
+      scoreTimer += dt;
+      if (scoreTimer > 1.2) {
+        scoreTimer = 0;
+        const s = getMockScore();
+        const newTex = makeScoreboardTexture(s);
+        scoreboard.material.map.dispose();
+        scoreboard.material.map = newTex;
+        scoreboard.material.needsUpdate = true;
+      }
+
+      // camera tween
+      if (camTween) {
+        camTween.t += dt;
+        const a = Math.min(camTween.t / camTween.duration, 1);
+        const s = a*a*(3-2*a);
+        camera.position.lerpVectors(camTween.fromPos, camTween.toPos, s);
+        controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, s);
+        if (a >= 1) { camTween = null; controls.enabled = true; }
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+
+      // FPS display
+      fpsAcc += (1/dt);
+      fpsCount++;
+      fpsTimer += dt;
+      if (fpsTimer > 0.5) {
+        fpsEl.textContent = `FPS: ${Math.round(fpsAcc / fpsCount)}`;
+        fpsAcc = 0; fpsCount = 0; fpsTimer = 0;
+      }
+    }
+    animate();
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
+
+
+

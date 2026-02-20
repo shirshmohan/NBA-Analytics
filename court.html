@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Three.js Basketball Court</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background:#0b0b0b; }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0b0b);
+
+  const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 500);
+  camera.position.set(0, 20, 28);
+  camera.lookAt(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // Lights
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x222233, 0.9));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+  dir.position.set(15, 20, 10);
+  dir.castShadow = true;
+  dir.shadow.mapSize.set(2048, 2048);
+  scene.add(dir);
+
+  // Court sizes
+  const COURT_L = 28.65;
+  const COURT_W = 15.24;
+
+  // Floor
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(COURT_W, COURT_L),
+    new THREE.MeshStandardMaterial({ color: 0xb57a3c, roughness: 0.7 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Lines
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xf2f2f2 });
+  const yLine = 0.01;
+
+  function addLine(x1, z1, x2, z2) {
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x1, yLine, z1),
+      new THREE.Vector3(x2, yLine, z2),
+    ]);
+    scene.add(new THREE.Line(geo, lineMat));
+  }
+  function addRect(x1, z1, x2, z2) {
+    addLine(x1, z1, x2, z1);
+    addLine(x2, z1, x2, z2);
+    addLine(x2, z2, x1, z2);
+    addLine(x1, z2, x1, z1);
+  }
+  function addCircle(cx, cz, r, segments = 64) {
+    const pts = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = (i / segments) * Math.PI * 2;
+      pts.push(new THREE.Vector3(cx + Math.cos(t)*r, yLine, cz + Math.sin(t)*r));
+    }
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  }
+
+  // Markings
+  addRect(-COURT_W/2, -COURT_L/2, COURT_W/2, COURT_L/2);
+  addLine(-COURT_W/2, 0, COURT_W/2, 0);
+  addCircle(0, 0, 1.8);
+
+  const keyW = 4.88, keyL = 5.8;
+  addRect(-keyW/2, -COURT_L/2, keyW/2, -COURT_L/2 + keyL);
+  addRect(-keyW/2,  COURT_L/2 - keyL, keyW/2,  COURT_L/2);
+  addCircle(0, -COURT_L/2 + keyL, 1.8);
+  addCircle(0,  COURT_L/2 - keyL, 1.8);
+
+  // Hoops: keep rim positions so we can aim shots
+  const rims = [];
+  function addHoop(zEnd, direction) {
+    const rimPos = new THREE.Vector3(0, 3.05, zEnd - direction * 1.55);
+
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.23, 0.02, 16, 64),
+      new THREE.MeshStandardMaterial({ color: 0xff6a00, roughness: 0.4 })
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.copy(rimPos);
+    rim.castShadow = true;
+    scene.add(rim);
+
+    const board = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 1.05, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xffffff })
+    );
+    board.position.set(0, 3.35, zEnd - direction * 1.2);
+    board.castShadow = true;
+    scene.add(board);
+
+    rims.push(rimPos);
+  }
+  addHoop(-COURT_L/2, -1);
+  addHoop( COURT_L/2,  1);
+
+  // Ball
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.24, 32, 32),
+    new THREE.MeshStandardMaterial({ color: 0xd36a2d, roughness: 0.75 })
+  );
+  ball.castShadow = true;
+  scene.add(ball);
+
+  const ballStart = new THREE.Vector3(1.2, 0.24, 0.5);
+  ball.position.copy(ballStart);
+
+  // --- Shooting mechanics ---
+  let shot = null; // {t, duration, p0, p1, apex, spinDir}
+
+  function nearestRim(fromPos) {
+    let best = rims[0], bestD = Infinity;
+    for (const r of rims) {
+      const d = fromPos.distanceToSquared(r);
+      if (d < bestD) { bestD = d; best = r; }
+    }
+    return best.clone();
+  }
+
+  // Quadratic Bezier: p(t) = (1-t)^2 p0 + 2(1-t)t p1 + t^2 p2
+  function bezier(p0, p1, p2, t) {
+    const a = p0.clone().multiplyScalar((1 - t) * (1 - t));
+    const b = p1.clone().multiplyScalar(2 * (1 - t) * t);
+    const c = p2.clone().multiplyScalar(t * t);
+    return a.add(b).add(c);
+  }
+
+  function shootTo(target) {
+    // If already shooting, ignore spam clicks
+    if (shot) return;
+
+    const p0 = ball.position.clone();
+    const p2 = target.clone();
+
+    // Aim slightly above rim center so it feels like a swish
+    p2.y += 0.05;
+
+    // Apex point: halfway + height boost (based on distance)
+    const mid = p0.clone().lerp(p2, 0.5);
+    const dist = p0.distanceTo(p2);
+    const heightBoost = 4 + Math.min(dist * 0.18, 5); // tune this
+    const p1 = mid.clone();
+    p1.y = Math.max(p0.y, p2.y) + heightBoost;
+
+    // Duration based on distance
+    const duration = 0.75 + Math.min(dist * 0.03, 0.75);
+
+    shot = { t: 0, duration, p0, p1, p2, spinDir: Math.random() < 0.5 ? -1 : 1 };
+  }
+
+  // Click anywhere to shoot to nearest hoop
+  window.addEventListener("pointerdown", () => {
+    const rim = nearestRim(ball.position);
+    shootTo(rim);
+  });
+
+  // Reset with R
+  window.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === "r") {
+      shot = null;
+      ball.position.copy(ballStart);
+      ball.rotation.set(0, 0, 0);
+    }
+  });
+
+  // Animate
+  const clock = new THREE.Clock();
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+
+    if (shot) {
+      shot.t += dt / shot.duration;
+      const t = Math.min(shot.t, 1);
+
+      const p = bezier(shot.p0, shot.p1, shot.p2, t);
+      ball.position.copy(p);
+
+      // Spin for realism
+      ball.rotation.x += dt * 8;
+      ball.rotation.z += dt * 6 * shot.spinDir;
+
+      // End shot: drop ball to floor and reset
+      if (t >= 1) {
+        // tiny pause then reset
+        shot = null;
+        setTimeout(() => {
+          ball.position.copy(ballStart);
+          ball.rotation.set(0, 0, 0);
+        }, 450);
+      }
+    } else {
+      // idle spin
+      ball.rotation.y += dt * 0.6;
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+</script>
+
+</body>
+</html>
+
