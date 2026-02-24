@@ -184,42 +184,42 @@
 
 const loader = new THREE.TextureLoader();
 
-function createCokeCan() {
-  const g = new THREE.Group();
+    function createCokeCan() {
+        const g = new THREE.Group();
 
-  const bodyGeo = new THREE.CylinderGeometry(0.42, 0.42, 1.35, 48, 1, true);
+        const bodyGeo = new THREE.CylinderGeometry(0.42, 0.42, 1.35, 48, 1, true);
 
-  const labelTex = loader.load("./assets/images.jpg");
-  labelTex.colorSpace = THREE.SRGBColorSpace;
-  labelTex.wrapS = THREE.RepeatWrapping;   // wrap around
-  labelTex.wrapT = THREE.ClampToEdgeWrapping;
-  labelTex.repeat.set(1, 1);              // keep 1 unless your image needs tiling
-  labelTex.anisotropy = 8;
+        const labelTex = loader.load("./assets/images.jpg");
+        labelTex.colorSpace = THREE.SRGBColorSpace;
+        labelTex.wrapS = THREE.RepeatWrapping;   // wrap around
+        labelTex.wrapT = THREE.ClampToEdgeWrapping;
+        labelTex.repeat.set(1, 1);              // keep 1 unless your image needs tiling
+        labelTex.anisotropy = 8;
 
-  const bodyMat = new THREE.MeshStandardMaterial({
-    map: labelTex,
-    metalness: 0.6,   // can is metallic, label is not—this is a “good enough” look
-    roughness: 0.35
-  });
+        const bodyMat = new THREE.MeshStandardMaterial({
+            map: labelTex,
+            metalness: 0.6,   // can is metallic, label is not—this is a “good enough” look
+            roughness: 0.35
+        });
 
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
 
-  // top/bottom same as before
-  const capMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.92, roughness: 0.2 });
+    // top/bottom same as before
+    const capMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.92, roughness: 0.2 });
 
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.40, 0.08, 48), capMat);
-  top.position.y = 0.715;
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.40, 0.08, 48), capMat);
+    top.position.y = 0.715;
 
-  const bottom = top.clone();
-  bottom.position.y = -0.715;
+    const bottom = top.clone();
+    bottom.position.y = -0.715;
 
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.03, 16, 64), capMat);
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.73;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.03, 16, 64), capMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.73;
 
-  g.add(body, top, bottom, rim);
-  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  return g;
+    g.add(body, top, bottom, rim);
+    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return g;
 }
 
     // --- add items (float + rotate + draggable) ---

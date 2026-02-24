@@ -195,60 +195,192 @@ def player_accolades(player_name: str, db: Session = Depends(get_db)):
     }
 
 
-# ---------------------------------------------
-# 4) Recent game log (uses player_game_stats)
-# ---------------------------------------------
-@router.get("/{player_name}/games")
-def player_recent_games(
-    player_name: str,
-    limit: int = Query(20, ge=1, le=200),
+@router.get("/{player_name}/season-percentiles")
+def player_season_percentiles(
+    player_name:str,
+    season: int =  Query(... ,description="Season start year (e.g.,2021)"),
+    min_games: int = Query(30,ge=0, le=82),
+    db:Session = Depends(get_db),
+):
+    player_name = unquote(player_name)
+
+    sql = text("""
+    WITH season_pool AS (
+      SELECT
+        season,
+        player,
+        person_id,
+        g,
+
+        (pts::numeric / NULLIF(g,0)) AS ppg,
+        (ast::numeric / NULLIF(g,0)) AS apg,
+        (trb::numeric / NULLIF(g,0)) AS rpg,
+        (stl::numeric / NULLIF(g,0)) AS spg,
+        (blk::numeric / NULLIF(g,0)) AS bpg,
+
+        (mp::numeric / NULLIF(g,0)) AS mpg,
+
+        fta,
+        trp_dbl,
+
+        (tov::numeric / NULLIF(g,0)) AS tov_pg,
+
+        fg_percent   AS fg_pct,
+        x3p_percent  AS x3p_pct,
+        ft_percent   AS ft_pct,
+        e_fg_percent AS efg_pct
+
+      FROM player_season_stats
+      WHERE season = :season
+        AND g >= :min_games
+    ),
+    ranked AS (
+      SELECT
+        *,
+
+        COUNT(*) OVER () AS pool_size,
+
+        CUME_DIST() OVER (ORDER BY ppg)    AS ppg_pctile,
+        CUME_DIST() OVER (ORDER BY apg)    AS apg_pctile,
+        CUME_DIST() OVER (ORDER BY rpg)    AS rpg_pctile,
+        CUME_DIST() OVER (ORDER BY spg)    AS spg_pctile,
+        CUME_DIST() OVER (ORDER BY bpg)    AS bpg_pctile,
+
+        CUME_DIST() OVER (ORDER BY fg_pct)  AS fg_pctile,
+        CUME_DIST() OVER (ORDER BY x3p_pct) AS x3p_pctile,
+        CUME_DIST() OVER (ORDER BY ft_pct)  AS ft_pctile,
+        CUME_DIST() OVER (ORDER BY efg_pct) AS efg_pctile,
+
+        CUME_DIST() OVER (ORDER BY fta)     AS fta_pctile,
+        CUME_DIST() OVER (ORDER BY trp_dbl) AS trp_dbl_pctile,
+
+        CUME_DIST() OVER (ORDER BY mpg)     AS mpg_pctile,
+
+        CUME_DIST() OVER (ORDER BY tov_pg DESC) AS tov_pctile_better
+
+      FROM season_pool
+    )
+    SELECT
+      player,
+      person_id,
+      season,
+      g,
+      pool_size,
+
+      ROUND(ppg, 2) AS ppg,
+      ROUND(apg, 2) AS apg,
+      ROUND(rpg, 2) AS rpg,
+      ROUND(spg, 2) AS spg,
+      ROUND(bpg, 2) AS bpg,
+      ROUND(mpg, 2) AS mpg,
+
+      fta,
+      trp_dbl,
+
+      ROUND(tov_pg, 2) AS tov_pg,
+
+      ROUND(fg_pct::numeric, 3)  AS fg_pct,
+      ROUND(x3p_pct::numeric, 3) AS x3p_pct,
+      ROUND(ft_pct::numeric, 3)  AS ft_pct,
+      ROUND(efg_pct::numeric, 3) AS efg_pct,
+
+      ROUND((100 * ppg_pctile)::numeric, 1) AS ppg_percentile,
+      ROUND((100 * apg_pctile)::numeric, 1) AS apg_percentile,
+      ROUND((100 * rpg_pctile)::numeric, 1) AS rpg_percentile,
+      ROUND((100 * spg_pctile)::numeric, 1) AS spg_percentile,
+      ROUND((100 * bpg_pctile)::numeric, 1) AS bpg_percentile,
+
+      ROUND((100 * fg_pctile)::numeric, 1)  AS fg_percentile,
+      ROUND((100 * x3p_pctile)::numeric, 1) AS x3p_percentile,
+      ROUND((100 * ft_pctile)::numeric, 1)  AS ft_percentile,
+      ROUND((100 * efg_pctile)::numeric, 1) AS efg_percentile,
+
+      ROUND((100 * fta_pctile)::numeric, 1)     AS fta_percentile,
+      ROUND((100 * trp_dbl_pctile)::numeric, 1) AS trp_dbl_percentile,
+      ROUND((100 * mpg_pctile)::numeric, 1)     AS mpg_percentile,
+
+      ROUND((100 * tov_pctile_better)::numeric, 1) AS tov_percentile_better
+
+    FROM ranked
+    WHERE player = :player;
+    """)
+
+    row = db.execute(sql,{"season":season,"min_games":min_games,"player":player_name}).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No percentile row found for that player/season/min_games.")
+
+    return dict(row)
+
+
+@router.get("/{player_name}/season-ranks")
+def player_season_ranks(
+    player_name:str,
+    season: int = Query(..., description="Season start year (e.g., 2021)"),
+    min_games: int = Query(30, ge=0, le=82),
     db: Session = Depends(get_db),
 ):
     player_name = unquote(player_name)
-    person_id = resolve_person_id(db, player_name)
-    if person_id is None:
-        raise HTTPException(status_code=404, detail="Could not resolve person_id for this player name")
-
     sql = text("""
-        SELECT
-          game_id,
-          team_ref_id,
-          opponent_team_ref_id,
-          home,
-          win,
+    WITH season_pool AS (
+      SELECT
+        season,
+        player,
+        person_id,
+        g,
+        (pts::numeric / NULLIF(g,0)) AS ppg,
+        (ast::numeric / NULLIF(g,0)) AS apg,
+        (stl::numeric / NULLIF(g,0)) AS spg,
+        (mp::numeric  / NULLIF(g,0)) AS mpg,
+        (tov::numeric / NULLIF(g,0)) AS tov_pg
+      FROM player_season_stats
+      WHERE season = :season
+        AND g >= :min_games
+    ),
+    ranked AS (
+      SELECT
+        *,
+        COUNT(*) OVER () AS pool_size,
 
-          minutes_played,
-          points,
-          assists,
-          rebounds_total,
-          rebounds_offensive,
-          rebounds_defensive,
-          steals,
-          blocks,
-          turnovers,
-          fouls_personal,
-          plus_minus,
+        RANK() OVER (ORDER BY ppg DESC) AS ppg_rank,
+        RANK() OVER (ORDER BY apg DESC) AS apg_rank,
+        RANK() OVER (ORDER BY spg DESC) AS spg_rank,
+        RANK() OVER (ORDER BY mpg DESC) AS mpg_rank,
+        RANK() OVER (ORDER BY tov_pg ASC) AS tov_rank,
 
-          field_goals_made,
-          field_goals_attempted,
-          field_goals_percentage,
-          two_p_made,
-          three_pointers_made,
-          three_pointers_attempted,
-          three_pointers_percentage,
-          free_throws_made,
-          free_throws_attempted,
-          free_throws_percentage
-        FROM player_game_stats
-        WHERE person_id = :pid
-        ORDER BY game_id DESC
-        LIMIT :limit;
+        AVG(ppg) OVER () AS avg_ppg_pool,
+        AVG(apg) OVER () AS avg_apg_pool,
+        AVG(spg) OVER () AS avg_spg_pool,
+        AVG(mpg) OVER () AS avg_mpg_pool
+      FROM season_pool
+    )
+    SELECT
+      player,
+      person_id,
+      season,
+      g,
+      pool_size,
+
+      ROUND(ppg, 2) AS ppg,
+      ROUND(apg, 2) AS apg,
+      ROUND(spg, 2) AS spg,
+      ROUND(mpg, 2) AS mpg,
+
+      ppg_rank,
+      apg_rank,
+      spg_rank,
+      mpg_rank,
+
+      ROUND(avg_ppg_pool::numeric, 2) AS avg_ppg_pool,
+      ROUND(avg_apg_pool::numeric, 2) AS avg_apg_pool,
+      ROUND(avg_spg_pool::numeric, 2) AS avg_spg_pool,
+      ROUND(avg_mpg_pool::numeric, 2) AS avg_mpg_pool
+    FROM ranked
+    WHERE player = :player;
     """)
-    games = db.execute(sql, {"pid": person_id, "limit": limit}).mappings().all()
 
-    return {
-        "player": player_name,
-        "person_id": person_id,
-        "games": games,
-    }
+    row = db.execute(sql, {"season": season, "min_games": min_games, "player": player_name}).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="No rank row found for that player/season/min_games.")
 
+    return dict(row)
