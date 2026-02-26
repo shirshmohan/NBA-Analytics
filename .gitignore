@@ -28,3 +28,28 @@ node_modules/
 dist/
 build/
 .next/
+
+
+# deps
+node_modules/
+
+# build output
+dist/
+build/
+
+# env
+.env
+.env.*
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/frontend/nba-analytics-v2.zip
+frontend/nba-analytics-v2.zip
