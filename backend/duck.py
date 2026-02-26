@@ -1,38 +1,41 @@
+import os
 import duckdb
-from pathlib import Path
 
-PARQUET_PATH = r"C:\Users\KIIT0001\Documents\IM_CRAZY_BRUH\PlayByPlay.parquet"         # your big parquet (823MB)
-OUT_CSV      = r"C:\Users\KIIT0001\Documents\IM_CRAZY_BRUH\trial_2025.csv" # output sample
-N_GAMES      = 25
+# 1) Path to your big parquet file
+INPUT_PARQUET = r"C:\Users\KIIT0001\Documents\IM_CRAZY_BRUH\PlayByPlay.parquet"
 
-con = duckdb.connect()
+# 2) Output folder in Documents
+OUT_DIR = r"C:\Users\KIIT0001\Documents\pbp_by_game_parquet"
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# 1) Pick 25 distinct gameIds from 2025
-#    (cast protects you if gameDateTimeEst is a string)
-game_ids = con.execute(f"""
-    WITH games AS (
-      SELECT DISTINCT gameId
-      FROM read_parquet('{PARQUET_PATH}')
-      WHERE EXTRACT(year FROM CAST(gameDateTimeEst AS TIMESTAMP)) = 2025
-    )
-    SELECT gameId
-    FROM games
-    USING SAMPLE {N_GAMES} ROWS
-""").fetchall()
+con = duckdb.connect()  # in-memory DB (fast)
 
-game_ids = [g[0] for g in game_ids]
-print("Picked gameIds:", game_ids[:5], "... total:", len(game_ids))
+# Load once (so we don't scan the big parquet repeatedly)
+con.execute("""
+    CREATE TEMP TABLE pbp AS
+    SELECT
+        CAST(gameid AS VARCHAR) AS gameid,
+        CAST(actionNumber AS BIGINT) AS actionNumber,
+        * EXCLUDE (gameid, actionNumber)
+    FROM read_parquet(?)
+""", [INPUT_PARQUET])
 
-# 2) Export all play-by-play rows for those games
-#    ORDER BY ensures event sequence is correct
-con.execute(f"""
-COPY (
-  SELECT *
-  FROM read_parquet('{PARQUET_PATH}')
-  WHERE gameId IN ({",".join(["?"]*len(game_ids))})
-  ORDER BY gameId, period, actionNumber, orderNumber
-)
-TO '{OUT_CSV}' (HEADER, DELIMITER ',');
-""", game_ids)
+# Get list of games
+game_ids = [row[0] for row in con.execute("SELECT DISTINCT gameid FROM pbp ORDER BY gameid").fetchall()]
+print("Total games:", len(game_ids))
 
-print("Wrote:", OUT_CSV)
+# Export one parquet per game, sorted by actionNumber
+for gid in game_ids:
+    out_file = os.path.join(OUT_DIR, f"{gid}.parquet")
+
+    con.execute(f"""
+        COPY (
+            SELECT * FROM pbp
+            WHERE gameid = ?
+            ORDER BY actionNumber ASC
+        )
+        TO ?
+        (FORMAT PARQUET, COMPRESSION ZSTD);
+    """, [gid, out_file])
+
+print("Done. Output folder:", OUT_DIR)
