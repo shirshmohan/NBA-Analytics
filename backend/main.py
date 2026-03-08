@@ -4,6 +4,7 @@ from routes.game_stats import router as game_details_router
 from routes.player_dashboard import router as player_router
 from routes.pbp_team import router as team_router
 from routes.pbp_player import router as player_pbp_router
+from routes.agent import router as agent_router
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,3 +30,5 @@ app.include_router(game_details_router)
 app.include_router(player_router)
 app.include_router(team_router)    
 app.include_router(player_pbp_router)
+app.include_router(agent_router)
+

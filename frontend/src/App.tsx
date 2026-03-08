@@ -9,6 +9,7 @@ const HomePage = lazy(() => import('@/pages/HomePage'))
 const PlayersPage = lazy(() => import('@/pages/PlayersPage'))
 const GamesPage = lazy(() => import('@/pages/GamesPage'))
 const ComparePage = lazy(() => import('@/pages/ComparePage'))
+const AgentPage   = lazy(() => import('@/pages/AgentPage'))
 
 function PageLoader() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="/players" element={<PlayersPage />} />
               <Route path="/games" element={<GamesPage />} />
               <Route path="/compare" element={<ComparePage />} />
+              <Route path="/agent"   element={<AgentPage />} />
               <Route path="*" element={
                 <div className="min-h-screen pt-14 flex items-center justify-center">
                   <div className="text-center">

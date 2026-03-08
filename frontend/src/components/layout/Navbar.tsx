@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { to: '/players', label: 'Players', icon: '👤' },
   { to: '/games', label: 'Games', icon: '🏀' },
   { to: '/compare', label: 'Compare', icon: '⚖️' },
+  { to: '/agent',   label: 'Agent',   icon: '🤖' },
 ]
 
 export default function Navbar() {
